@@ -82,7 +82,7 @@ public class ExamineFieldOfflineActivity extends AppCompatActivity {
                         Toast.makeText(ExamineFieldOfflineActivity.this, "Delay Time should be at least 5 seconds", Toast.LENGTH_SHORT).show();
                     }
                     else{
-                        File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).getAbsolutePath() + "/" + etFolderName.getText().toString());
+                        File dir = ImageStorage.getFolder(this, etFolderName.getText().toString());
                         try {
                             if(dir.exists()){
                                 Toast.makeText(ExamineFieldOfflineActivity.this, "Folder Already Exists", Toast.LENGTH_SHORT).show();

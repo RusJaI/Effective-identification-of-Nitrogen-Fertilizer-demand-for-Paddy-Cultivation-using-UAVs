@@ -70,9 +70,9 @@ export class FieldVisitService {
 
     else
       if (type == 'request')
-        return this.fireStore.collection('FieldRequests', ref => ref.where('fieldId', '==', fieldId).where('status', 'in', ['pending' || 'confirmed' || 'declined'])).snapshotChanges();
+        return this.fireStore.collection('FieldRequests', ref => ref.where('fieldId', '==', fieldId).where('status', 'in', ['pending', 'confirmed', 'declined'])).snapshotChanges();
       else
-        return this.fireStore.collection('FieldRequests', ref => ref.where('fieldId', '==', fieldId).where('status', 'in', ['completed' || 'processing'])).snapshotChanges();
+        return this.fireStore.collection('FieldRequests', ref => ref.where('fieldId', '==', fieldId).where('status', 'in', ['completed', 'processing'])).snapshotChanges();
 
   }
 

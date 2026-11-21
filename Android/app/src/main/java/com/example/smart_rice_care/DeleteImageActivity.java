@@ -6,8 +6,12 @@ import androidx.appcompat.app.AppCompatActivity;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.content.ContentValues;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.MediaStore;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -27,6 +31,9 @@ import com.google.firebase.firestore.QuerySnapshot;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.OutputStream;
+import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 
@@ -37,6 +44,7 @@ public class DeleteImageActivity extends AppCompatActivity {
     Integer currentIndex;
     ImageView ivImage, ivNext, ivBack;
     Button btDelete, btFinish;
+    TextView tvSyncReport;
     String folderName, approach;
 
     @Override
@@ -45,7 +53,8 @@ public class DeleteImageActivity extends AppCompatActivity {
         setContentView(R.layout.activity_delete_image);
 
         Intent getIntent = getIntent();
-        fileNames =  (ArrayList<Long>)  getIntent.getSerializableExtra("fileNames");
+        fileNames = (ArrayList<Long>) getIntent.getSerializableExtra("fileNames");
+        if (fileNames == null) fileNames = new ArrayList<>();
         folderName =  getIntent.getStringExtra("folderName");
         approach = getIntent.getStringExtra("approach");
         ivImage = findViewById(R.id.ivImage);
@@ -53,8 +62,13 @@ public class DeleteImageActivity extends AppCompatActivity {
         ivBack = findViewById(R.id.ivBack);
         btDelete = findViewById(R.id.btDelete);
         btFinish = findViewById(R.id.btFinish);
+        tvSyncReport = findViewById(R.id.tvSyncReport);
         tvImageCount = findViewById(R.id.tvImageCount);
         currentIndex = fileNames.size()-1;
+
+        if ("online".equals(approach)) {
+            startDeferredProcessing(getIntent.getStringExtra("requestId"));
+        }
 
         showImage();
 
@@ -123,12 +137,19 @@ public class DeleteImageActivity extends AppCompatActivity {
                 }
 
                 if(fileNames.size()>1){
-                    File imgFile = new  File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).getAbsolutePath() +
-                            "/" + folderName + "/" + fileNames.get(currentIndex)+".jpg");
+                    File imgFile = new File(ImageStorage.getFolder(this, folderName), fileNames.get(currentIndex)+".jpg");
                     if (imgFile.exists()) {
                         if (imgFile.delete()) {
                             System.out.println("testing==="+fileNames.size());
                             fileNames.remove(fileNames.get(currentIndex));
+                            if ("online".equals(approach)) {
+                                CaptureQueue queue = new CaptureQueue(DeleteImageActivity.this);
+                                try {
+                                    queue.removeForImage(folderName, Long.parseLong(imgFile.getName().replace(".jpg", "")));
+                                } finally {
+                                    queue.close();
+                                }
+                            }
                             if(currentIndex>0){
                                 currentIndex--;
                             }
@@ -167,12 +188,106 @@ public class DeleteImageActivity extends AppCompatActivity {
                                     Log.w("Status Update: ", "Error updating document", e);
                                 }
                             });
+                } else {
+                    exportImagesForWebUpload();
                 }
                 finish();
             }
         });
 
 
+    }
+
+    /** Process only failed captures, and only after the inspection has ended. */
+    private void startDeferredProcessing(String requestId) {
+        if (requestId == null || requestId.isEmpty()) return;
+        btFinish.setEnabled(false);
+        btDelete.setEnabled(false);
+        tvSyncReport.setVisibility(View.VISIBLE);
+        tvSyncReport.setText("Checking for images deferred during this inspection…");
+        CaptureSyncManager.processPendingForInspection(this, requestId,
+                (predictedCount, remaining, attempted) -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    int exported = exportCapturesForWebUpload(remaining);
+                    StringBuilder report = new StringBuilder("Deferred image report: ")
+                            .append(predictedCount).append(" processed");
+                    if (!remaining.isEmpty()) {
+                        report.append(", ").append(remaining.size()).append(" still pending");
+                        if (exported > 0) {
+                            report.append(" (copied to Pictures/SmartRiceCare for web upload)");
+                        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                            report.append(" (still stored in the app; export requires Android 10+)");
+                        }
+                    } else if (predictedCount == 0) {
+                        report = new StringBuilder("All images from this inspection already have results.");
+                    }
+                    if (!attempted && !remaining.isEmpty()) {
+                        report.append(" No network was available at inspection end, so these images were not retried.");
+                    }
+                    tvSyncReport.setText(report.toString());
+                    btFinish.setEnabled(true);
+                    btDelete.setEnabled(true);
+                });
+    }
+
+    private int exportCapturesForWebUpload(java.util.List<CaptureRecord> captures) {
+        if (captures.isEmpty() || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0;
+        int exported = 0;
+        for (CaptureRecord capture : captures) {
+            File source = capture.getImageFile();
+            if (!source.isFile()) continue;
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Images.Media.DISPLAY_NAME, folderName + "_" + capture.timestamp + ".jpg");
+            values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+            values.put(MediaStore.Images.Media.RELATIVE_PATH,
+                    Environment.DIRECTORY_PICTURES + "/SmartRiceCare/" + folderName);
+            Uri destination = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+            if (destination == null) continue;
+            try (FileInputStream input = new FileInputStream(source);
+                 OutputStream output = getContentResolver().openOutputStream(destination)) {
+                if (output == null) throw new IOException("Unable to open image destination");
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+                exported++;
+            } catch (IOException e) {
+                getContentResolver().delete(destination, null, null);
+                Log.e("ImageExport", "Unable to export " + source.getName(), e);
+            }
+        }
+        return exported;
+    }
+
+    /** Copy offline captures into shared Pictures storage so the web upload picker can see them. */
+    private void exportImagesForWebUpload() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            Toast.makeText(this, "Use Android 10 or newer to export images from this screen", Toast.LENGTH_LONG).show();
+            return;
+        }
+        int exported = 0;
+        for (Long timestamp : fileNames) {
+            File source = new File(ImageStorage.getFolder(this, folderName), timestamp + ".jpg");
+            if (!source.isFile()) continue;
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Images.Media.DISPLAY_NAME, folderName + "_" + timestamp + ".jpg");
+            values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+            values.put(MediaStore.Images.Media.RELATIVE_PATH,
+                    Environment.DIRECTORY_PICTURES + "/SmartRiceCare/" + folderName);
+            Uri destination = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+            if (destination == null) continue;
+            try (FileInputStream input = new FileInputStream(source);
+                 OutputStream output = getContentResolver().openOutputStream(destination)) {
+                if (output == null) throw new IOException("Unable to open image destination");
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+                exported++;
+            } catch (IOException e) {
+                getContentResolver().delete(destination, null, null);
+                Log.e("ImageExport", "Unable to export " + source.getName(), e);
+            }
+        }
+        Toast.makeText(this, exported + " image(s) exported to Pictures/SmartRiceCare for web upload", Toast.LENGTH_LONG).show();
     }
 
     private void showImage() {
@@ -194,8 +309,7 @@ public class DeleteImageActivity extends AppCompatActivity {
 
         if (fileNames.size()>0 && fileNames.size()>currentIndex){
 
-            File imgFile = new  File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).getAbsolutePath() +
-                    "/" + folderName + "/" + fileNames.get(currentIndex) +".jpg");
+            File imgFile = new File(ImageStorage.getFolder(this, folderName), fileNames.get(currentIndex) +".jpg");
             if(imgFile.exists()){
                 Bitmap myBitmap = BitmapFactory.decodeFile(imgFile.getAbsolutePath());
                 ivImage.setImageBitmap(myBitmap);

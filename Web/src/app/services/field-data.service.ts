@@ -10,6 +10,9 @@ import { ThrowStmt } from '@angular/compiler';
 })
 export class FieldDataService {
 
+  // Override this deployment URL with the environment-specific prediction API before release.
+  private readonly predictionApiUrl = 'https://docker-python3-opencv-uvbeppe6ea-el.a.run.app';
+
   constructor(private fireStore : AngularFirestore, private http : HttpClient) { }
 
   
@@ -31,9 +34,7 @@ export class FieldDataService {
   }
 
   getLevelFromServer(fd : FormData){
-
-     return this.http.post<number>('http://127.0.0.1:5000/svcprocess', fd);    //changed on 4th april for wifi
-    // return this.http.post<number>('http://172.20.10.2:5000/process', fd);    //changed on 4th april for mobile phone data
+    return this.http.post<number>(this.predictionApiUrl + '/svcprocess', fd);
   }
 
   getFieldDataUsingRequestId(fieldData : FieldData){

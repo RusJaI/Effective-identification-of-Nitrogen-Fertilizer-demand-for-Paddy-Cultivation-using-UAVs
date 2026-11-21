@@ -52,7 +52,21 @@
         android:clickable="true"
         android:foreground="?android:attr/selectableItemBackground"/>
 
+    <TextView
+        android:id="@+id/tvSyncReport"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_above="@id/bottomActions"
+        android:layout_alignParentBottom="false"
+        android:background="#EEFFFFFF"
+        android:gravity="center"
+        android:padding="12dp"
+        android:textColor="@color/green_800"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
     <LinearLayout
+        android:id="@+id/bottomActions"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_alignParentBottom="true"

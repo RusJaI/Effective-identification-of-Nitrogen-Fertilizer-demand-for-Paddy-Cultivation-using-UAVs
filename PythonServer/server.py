@@ -11,12 +11,18 @@ import joblib
 from PIL import Image
 import io
 import firebase_admin
-from firebase_admin import credentials, firestore, initialize_app
+from firebase_admin import firestore, initialize_app
 
-cred = credentials.Certificate("../smart-rice-care-firebase-adminsdk.json")
-firestore_app = initialize_app(cred)
-db = firestore.client()
-result_ref = db.collection('TestingFieldData')
+# Cloud deployments should use the attached service account. Local development can set
+# GOOGLE_APPLICATION_CREDENTIALS to a service-account file without baking it into the image.
+db = None
+try:
+    if not firebase_admin._apps:
+        initialize_app()
+    db = firestore.client()
+except Exception as exc:
+    print("Firestore is unavailable; prediction-only routes remain enabled:", exc)
+result_ref = db.collection('TestingFieldData') if db is not None else None
 
 app = Flask(__name__)
 cors = CORS(app)
@@ -28,6 +34,7 @@ IMG_HEIGHT=400
 def connect():
     return str("Connection Success!");
 
+@app.route("/process", methods=['POST'])
 @app.route("/svcprocess", methods=['POST'])
 def svcprocess():
     #capture the image from request
@@ -106,6 +113,8 @@ def svcprocessfire():
 
 def writeToServer(computed_level):
     try:
+        if result_ref is None:
+            return "Firestore is not configured"
         field_data_json=request.files["field_data"].read()
         field_data = json.loads(field_data_json)
         request_id=field_data["requestId"]
@@ -119,7 +128,7 @@ def writeToServer(computed_level):
 def predictSVC(df):
     print("predict")
     # Load the model from the file
-    model_svc = joblib.load('./svcmodel.pkl')
+    model_svc = joblib.load(os.path.join(os.path.dirname(__file__), 'svcmodel.pkl'))
     
     # Use the loaded model to make predictions
     prd=model_svc.predict(df)
@@ -128,7 +137,7 @@ def predictSVC(df):
 def predictDTree(df):
     print("predict")
     # Load the model from the file
-    model_dt = joblib.load('./dtreemodel.pkl')
+    model_dt = joblib.load(os.path.join(os.path.dirname(__file__), 'dtreemodel.pkl'))
     
     # Use the loaded model to make predictions
     prd=model_dt.predict(df)
@@ -203,5 +212,5 @@ def extract_metadata(image):
 
 
 
-#if __name__ == '__main__':
-app.run(host="0.0.0.0", port=5000, debug=True)
+if __name__ == '__main__':
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8080")), debug=False)

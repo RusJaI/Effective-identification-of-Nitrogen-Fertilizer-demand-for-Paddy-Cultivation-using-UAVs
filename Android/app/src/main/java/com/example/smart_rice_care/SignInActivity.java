@@ -17,6 +17,7 @@ import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.AuthResult;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.FirebaseApp;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
@@ -45,20 +46,29 @@ public class SignInActivity extends AppCompatActivity {
         progressBar = findViewById(R.id.progressBar);
         progressBar.setVisibility(View.GONE);
 
-        mAuth = FirebaseAuth.getInstance();
-
-        // Checking if user already logged in
-        FirebaseUser user = mAuth.getInstance().getCurrentUser();
-        if(user!=null){
-            progressBar.setVisibility(View.VISIBLE);
-            navigateUserRole(user.getUid());
-        }
-
         etEmail = findViewById(R.id.etEmail);
         etPassword = findViewById(R.id.etPassword);
 
         btRegister = findViewById(R.id.btRegister);
         btSignIn = findViewById(R.id.btSignIn);
+
+        // Permit offline capture when this checkout has no Firebase config (for example, a local
+        // debug build). Online auth remains available when google-services.json is supplied.
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            btRegister.setText("Continue Offline");
+            btSignIn.setEnabled(false);
+            btRegister.setOnClickListener(v -> startActivity(new Intent(
+                    SignInActivity.this, AgriculturalOfficerHomeOfflineActivity.class)));
+            Toast.makeText(this, "Firebase is not configured. Offline capture is available.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        mAuth = FirebaseAuth.getInstance();
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user != null) {
+            progressBar.setVisibility(View.VISIBLE);
+            navigateUserRole(user.getUid());
+        }
 
         String manufacturer = Build.MANUFACTURER;
         if(manufacturer.equals("OnePlus")){

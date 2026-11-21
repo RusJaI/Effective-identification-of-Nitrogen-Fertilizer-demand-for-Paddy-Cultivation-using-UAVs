@@ -5,7 +5,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.graphics.Matrix;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -13,7 +12,6 @@ import android.hardware.SensorManager;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
-import android.media.ExifInterface;
 import android.media.MediaPlayer;
 import android.os.Build;
 import android.os.Bundle;
@@ -21,12 +19,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.preference.PreferenceManager;
 import android.util.Log;
-import android.util.Rational;
-import android.util.Size;
-import android.view.Surface;
-import android.view.TextureView;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
@@ -35,13 +28,10 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.camera.core.CameraX;
-import androidx.camera.core.ImageCapture;
-import androidx.camera.core.ImageCaptureConfig;
-import androidx.camera.core.Preview;
-import androidx.camera.core.PreviewConfig;
+import androidx.camera.core.ImageCaptureException;
+import androidx.camera.view.PreviewView;
+import androidx.exifinterface.media.ExifInterface;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
@@ -73,10 +63,10 @@ import cz.msebera.android.httpclient.Header;
 public class ImageCaptureOfflineActivity extends AppCompatActivity implements SensorEventListener, LocationListener {
 
     private int REQUEST_CODE_PERMISSIONS = 101;
-    private String[] REQUIRED_PERMISSSIONS = new String[]{"android.permission.CAMERA", "android.permission.WRITE_EXTERNAL_STORAGE"};
+    private String[] REQUIRED_PERMISSSIONS = new String[]{Manifest.permission.CAMERA};
     String folderName;
     Integer delayTime;
-    TextureView txvCamera;
+    PreviewView txvCamera;
     Button btStop;
     TextView tvColorLevel, tvLongitude, tvLatitude;
     ImageButton btCaptureImage;
@@ -99,8 +89,7 @@ public class ImageCaptureOfflineActivity extends AppCompatActivity implements Se
     private final int SAMPLE_SIZE = 5; // change this sample size as you want, higher is more precise but slow measure.
     private double THRESHOLD = 0; // change this threshold as you want, higher is more spike movement
 
-    ImageCaptureConfig imageCaptureConfig;
-    ImageCapture imgCap;
+    private CameraCaptureController cameraController;
 
     MediaPlayer shutterSound;
     MediaPlayer music;
@@ -123,7 +112,6 @@ public class ImageCaptureOfflineActivity extends AppCompatActivity implements Se
     Location currentLocation;
     List<LatLng> polygonList = new ArrayList<>();
 
-    @RequiresApi(api = Build.VERSION_CODES.N)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -139,7 +127,9 @@ public class ImageCaptureOfflineActivity extends AppCompatActivity implements Se
         delayTime = getIntent.getIntExtra("delayTime", 0);
 
         Bundle args = getIntent.getBundleExtra("BUNDLE");
-        polygonList = (List<LatLng>) args.getSerializable("polygonList");
+        if (args != null && args.getSerializable("polygonList") != null) {
+            polygonList = (List<LatLng>) args.getSerializable("polygonList");
+        }
 
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
@@ -168,7 +158,7 @@ public class ImageCaptureOfflineActivity extends AppCompatActivity implements Se
 
         getSupportActionBar().hide();
         frameLayout = findViewById(R.id.frameLayout);
-        txvCamera = (TextureView) findViewById(R.id.txvCamera);
+        txvCamera = findViewById(R.id.txvCamera);
         btCaptureImage = findViewById(R.id.btCaptureImage);
         tvColorLevel = findViewById(R.id.tvColorLevel);
         tvLongitude = findViewById(R.id.tvLongitude);
@@ -212,132 +202,53 @@ public class ImageCaptureOfflineActivity extends AppCompatActivity implements Se
     }
 
     private void startCamera() {
-        CameraX.unbindAll();
-        Rational aspectRatio = new Rational(txvCamera.getWidth(), txvCamera.getHeight());
-        Size screen = new Size(txvCamera.getWidth(), txvCamera.getHeight());
-
-        PreviewConfig pConfig = new PreviewConfig.Builder().setTargetAspectRatio(aspectRatio).setTargetResolution(screen).build();
-        Preview preview = new Preview(pConfig);
-
-        preview.setOnPreviewOutputUpdateListener(
-                new Preview.OnPreviewOutputUpdateListener() {
-                    @Override
-                    public void onUpdated(Preview.PreviewOutput output) {
-                        ViewGroup parent = (ViewGroup) txvCamera.getParent();
-                        parent.removeView(txvCamera);
-                        parent.addView(txvCamera);
-
-                        txvCamera.setSurfaceTexture(output.getSurfaceTexture());
-                        updateTransform();
-                    }
-                }
-        );
-
-        imageCaptureConfig = new ImageCaptureConfig.Builder().setCaptureMode(ImageCapture.CaptureMode.MAX_QUALITY)
-                .setTargetRotation(getWindowManager().getDefaultDisplay().getRotation()).build();
-        imgCap = new ImageCapture(imageCaptureConfig);
-
-        btCaptureImage.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                captureImage(imgCap);
-            }
-        });
-
-        CameraX.bindToLifecycle(this, preview, imgCap);
+        cameraController = new CameraCaptureController(this, this, txvCamera);
+        cameraController.start();
+        btCaptureImage.setOnClickListener(v -> captureImage());
     }
 
-    private File captureImage(ImageCapture imgCap) {
-
-//        success.start();
-//        shutterSound.start();
+    private File captureImage() {
+        if (cameraController == null) return null;
         responseWaiting = true;
         long currentTimestamp = System.currentTimeMillis();
-        String filePath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).getAbsolutePath() + "/" + folderName + "/" + currentTimestamp + ".jpg";
-        File file = new File(filePath);
-        imgCap.takePicture(file, new ImageCapture.OnImageSavedListener() {
-            @RequiresApi(api = Build.VERSION_CODES.Q)
+        File dir = ImageStorage.getFolder(this, folderName);
+        if (!dir.exists() && !dir.mkdirs()) {
+            responseWaiting = false;
+            Toast.makeText(this, "Unable to create image folder", Toast.LENGTH_LONG).show();
+            return null;
+        }
+        File file = new File(dir, currentTimestamp + ".jpg");
+        cameraController.capture(file, new CameraCaptureController.CaptureCallback() {
             @Override
-            public void onImageSaved(@NonNull @NotNull File file) {
-//                success.start();
+            public void onSaved(File savedFile) {
                 fileNames.add(currentTimestamp);
                 tvColorLevel.setText("Saving...");
-                ExifInterface exif = null;
                 try {
-                    exif = new ExifInterface(filePath);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-                exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, GPS.convert(currentLocation.getLatitude()));
-                exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE,  GPS.convert(currentLocation.getLongitude()));
-                try {
-                    System.out.println("testing=== "+ "suceess");
+                    ExifInterface exif = new ExifInterface(savedFile.getAbsolutePath());
+                    if (currentLocation != null) {
+                        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, GPS.convert(currentLocation.getLatitude()));
+                        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, GPS.convert(currentLocation.getLongitude()));
+                    }
                     exif.saveAttributes();
-                    String msg = "Pic captured at " + file.getAbsolutePath();
-//                    shutterSound.pause();
                     success.start();
-                    Handler handler = new Handler();
-                    handler.postDelayed(new Runnable() {
-                        public void run() {
-                            tvColorLevel.setText("Ready...");
-//                            success.pause();
-                            responseWaiting = false;
-                        }
+                    new Handler().postDelayed(() -> {
+                        tvColorLevel.setText("Ready...");
+                        responseWaiting = false;
                     }, 2000);
-                    Toast.makeText(ImageCaptureOfflineActivity.this, msg, Toast.LENGTH_SHORT).show();
+                    Toast.makeText(ImageCaptureOfflineActivity.this, "Pic captured at " + savedFile.getAbsolutePath(), Toast.LENGTH_SHORT).show();
                 } catch (IOException e) {
-                    Toast.makeText(ImageCaptureOfflineActivity.this, ""+e.getMessage(), Toast.LENGTH_SHORT).show();
-                    e.printStackTrace();
+                    responseWaiting = false;
+                    Toast.makeText(ImageCaptureOfflineActivity.this, e.getMessage(), Toast.LENGTH_SHORT).show();
                 }
             }
 
             @Override
-            public void onError(@NonNull @NotNull ImageCapture.UseCaseError useCaseError, @NonNull @NotNull String message, @Nullable @org.jetbrains.annotations.Nullable Throwable cause) {
-
-                String msg = "Pic capture failed " + message;
-                Log.e("Pic capture failed", message);
-                Log.e("Pic capture failed", useCaseError.toString());
-                Log.e("Pic capture failed", cause.toString());
-                Toast.makeText(getBaseContext(), msg, Toast.LENGTH_LONG).show();
-
-                if(cause != null) {
-                    cause.printStackTrace();
-                }
+            public void onError(ImageCaptureException exception) {
+                responseWaiting = false;
+                Toast.makeText(ImageCaptureOfflineActivity.this, "Pic capture failed: " + exception.getMessage(), Toast.LENGTH_LONG).show();
             }
         });
         return file;
-    }
-
-    private void updateTransform() {
-        Matrix mx = new Matrix();
-        float w = txvCamera.getMeasuredWidth();
-        float h = txvCamera.getMeasuredHeight();
-
-        float cx = w/2f;
-        float cy = h/2f;
-
-        int rotationDgr;
-        int rotation = (int) txvCamera.getRotation();
-
-        switch(rotation){
-            case Surface.ROTATION_0:
-                rotationDgr = 0;
-                break;
-            case Surface.ROTATION_90:
-                rotationDgr = 90;
-                break;
-            case Surface.ROTATION_180:
-                rotationDgr = 180;
-                break;
-            case Surface.ROTATION_270:
-                rotationDgr = 270;
-                break;
-            default:
-                return;
-        }
-
-        mx.postRotate((float)rotationDgr, cx, cy);
-        txvCamera.setTransform(mx);
     }
 
     private boolean allPermissionGranted() {
@@ -378,7 +289,7 @@ public class ImageCaptureOfflineActivity extends AppCompatActivity implements Se
                     tvColorLevel.setText("Capturing...");
                     captured = true;
                     cameraWaiting = true;
-                    captureImage(imgCap);
+                    captureImage();
 
                     Handler handler = new Handler();
                     handler.postDelayed(new Runnable() {

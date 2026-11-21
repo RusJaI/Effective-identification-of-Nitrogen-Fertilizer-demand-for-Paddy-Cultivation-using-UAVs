@@ -1,25 +1,24 @@
-## Please go through the following steps to configure the web server
+# Paddy image prediction API
 
-1. Go to your terminal and type the following command:
+The Flask service masks green pixels, calculates RGB features, reads camera exposure metadata, and classifies the image with the bundled scikit-learn SVC model. `svcmodel.pkl` was serialized with scikit-learn 1.0.2, so that version is pinned in `requirements.txt` for compatibility.
 
-    $ pip3 install Flask
-    
-2. Install OpenCV,ScikitLearn,Numpy, Pandas,Piexif,Pillow python libraries providing the installation commands like above
+## API
 
-### Input to the /svcprocessfire [POST] url should be formatted as following key-value pairs :
+- `POST /process` or `POST /svcprocess`: multipart field `image`; returns the predicted LCC level as text.
+- `POST /svcprocessfire`: accepts `image` and a JSON `field_data` multipart file containing `longitude`, `latitude`, `officerId`, `requestId`, and `timestamp`; writes the prediction to the `TestingFieldData` Firestore collection and returns the level.
+- `GET /`: basic service response.
 
-#### image => the image that is captured to get the color level
-#### field_data => the json file containing the following data format :
-        {
-            "longitude":0.565656,
-            "latitude":4.125,
-            "officerId":"o123",
-            "requestId":"r123",
-            "timestamp":16452300
-            }
-            
-### The response along with the color level is sent to the database and the color level is sent back to the Android or Web client
+Prediction-only routes work without Firebase credentials. The Firestore route uses Application Default Credentials. For local development, set `GOOGLE_APPLICATION_CREDENTIALS` to a service-account JSON file; keep that file outside the repository. In Cloud Run, attach a service account with the required Firestore access.
 
-## Access the server with follownig URL
-#### https://docker-python3-opencv-uvbeppe6ea-el.a.run.app/process
+## Run locally
 
+```sh
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python server.py
+```
+
+The local server listens on port 8080 by default. Build the container from this directory with `docker build -t paddy-prediction .`; it runs under Gunicorn and listens on `$PORT` (8080 by default).
+
+The Android app sends `image` to `/svcprocess`. Configure its service base URL in `Android/local.properties` as `FLASK_SERVER_URL=https://your-service-host` (without a trailing slash). The web app should use the same HTTPS API URL; a `127.0.0.1` URL only refers to the user's own device.

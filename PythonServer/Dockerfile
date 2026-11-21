@@ -1,23 +1,15 @@
-# Set base image (host OS)
-FROM python:3.7-alpine
+FROM python:3.9-slim
 
-# By default, listen on port 5000
-EXPOSE 5000/tcp
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-# Set the working directory in the container
-WORKDIR /server
+WORKDIR /app
 
-# Copy the dependencies file to the working directory
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
 
-# Install any dependencies
-RUN apk add --update --no-cache py3-numpy
-ENV PYTHONPATH=/usr/lib/python3.7/site-packages
-RUN pip install --no-cache-dir numpy==1.16.1 pandas==0.24.1 cv
-RUN pip install -r requirements.txt
+COPY server.py svcmodel.pkl dtreemodel.pkl ./
 
-# Copy the content of the local src directory to the working directory
-COPY server.py .
-
-# Specify the command to run on container start
-CMD [ "python", "./server.py" ]
+EXPOSE 8080
+CMD ["sh", "-c", "gunicorn --workers 2 --threads 2 --timeout 120 --bind 0.0.0.0:${PORT:-8080} server:app"]

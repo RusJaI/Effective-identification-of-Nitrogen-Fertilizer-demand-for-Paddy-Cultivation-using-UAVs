@@ -1,14 +1,10 @@
 package com.example.smart_rice_care;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.camera.core.CameraX;
-import androidx.camera.core.ImageCapture;
-import androidx.camera.core.ImageCaptureConfig;
-import androidx.camera.core.Preview;
-import androidx.camera.core.PreviewConfig;
+import androidx.camera.core.ImageCaptureException;
+import androidx.camera.view.PreviewView;
+import androidx.exifinterface.media.ExifInterface;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
@@ -17,7 +13,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.graphics.Matrix;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -25,20 +20,12 @@ import android.hardware.SensorManager;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
-import android.media.ExifInterface;
 import android.media.MediaPlayer;
-import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Handler;
 import android.preference.PreferenceManager;
 import android.util.Log;
-import android.util.Rational;
-import android.util.Size;
-import android.view.Surface;
-import android.view.TextureView;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
@@ -59,31 +46,24 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
 import com.google.firebase.firestore.QuerySnapshot;
 import com.google.maps.android.PolyUtil;
-import com.loopj.android.http.RequestParams;
-import com.loopj.android.http.SyncHttpClient;
-import com.loopj.android.http.TextHttpResponseHandler;
 
 import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import cz.msebera.android.httpclient.Header;
 
 public class ImageCaptureActivity extends AppCompatActivity implements SensorEventListener, LocationListener {
 
     private int REQUEST_CODE_PERMISSIONS = 101;
-    private String[] REQUIRED_PERMISSSIONS = new String[]{"android.permission.CAMERA", "android.permission.WRITE_EXTERNAL_STORAGE"};
+    private String[] REQUIRED_PERMISSSIONS = new String[]{Manifest.permission.CAMERA};
     private String requestId, fieldId, farmerId;
     private Integer delayTime;
-    private TextureView txvCamera;
+    private PreviewView txvCamera;
     private TextView tvColorLevel, tvLongitude, tvLatitude;
     private ImageButton btCaptureImage;
     private FrameLayout frameLayout;
@@ -106,8 +86,7 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
     private final int SAMPLE_SIZE = 5; // change this sample size as you want, higher is more precise but slow measure.
     private double THRESHOLD = 0; // change this threshold as you want, higher is more spike movement
 
-    ImageCaptureConfig imageCaptureConfig;
-    ImageCapture imgCap;
+    private CameraCaptureController cameraController;
 
     MediaPlayer shutterSound;
     MediaPlayer music;
@@ -116,8 +95,8 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
     MediaPlayer beep;
 
     private boolean captured = false;
+    private long latestCaptureTimestamp = 0L;
     private boolean cameraWaiting = false;
-    private boolean responseWaiting = false;
     private boolean countdownWaiting = true;
     private boolean isWithinBoundary = false;
 
@@ -133,7 +112,6 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
 
     ArrayList<Long> fileNames = new ArrayList<>();
 
-    @RequiresApi(api = Build.VERSION_CODES.N)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -152,7 +130,9 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
         farmerId = getIntent.getStringExtra("farmerId");
         delayTime = getIntent.getIntExtra("delayTime", 0);
         Bundle args = getIntent.getBundleExtra("BUNDLE");
-        polygonList = (List<LatLng>) args.getSerializable("polygonList");
+        if (args != null && args.getSerializable("polygonList") != null) {
+            polygonList = (List<LatLng>) args.getSerializable("polygonList");
+        }
 
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
@@ -182,7 +162,7 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
 
         getSupportActionBar().hide();
         frameLayout = findViewById(R.id.frameLayout);
-        txvCamera = (TextureView) findViewById(R.id.txvCamera);
+        txvCamera = findViewById(R.id.txvCamera);
         btCaptureImage = findViewById(R.id.btCaptureImage);
         tvColorLevel = findViewById(R.id.tvColorLevel);
         tvLongitude = findViewById(R.id.tvLongitude);
@@ -360,127 +340,48 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
     }
 
     private void startCamera() {
-        CameraX.unbindAll();
-        Rational aspectRatio = new Rational(txvCamera.getWidth(), txvCamera.getHeight());
-        Size screen = new Size(txvCamera.getWidth(), txvCamera.getHeight());
-
-        PreviewConfig pConfig = new PreviewConfig.Builder().setTargetAspectRatio(aspectRatio).setTargetResolution(screen).build();
-        Preview preview = new Preview(pConfig);
-
-        preview.setOnPreviewOutputUpdateListener(
-                new Preview.OnPreviewOutputUpdateListener() {
-                    @Override
-                    public void onUpdated(Preview.PreviewOutput output) {
-                        ViewGroup parent = (ViewGroup) txvCamera.getParent();
-                        parent.removeView(txvCamera);
-                        parent.addView(txvCamera);
-
-                        txvCamera.setSurfaceTexture(output.getSurfaceTexture());
-                        updateTransform();
-                    }
-                }
-        );
-
-        imageCaptureConfig = new ImageCaptureConfig.Builder().setCaptureMode(ImageCapture.CaptureMode.MAX_QUALITY)
-                .setTargetRotation(getWindowManager().getDefaultDisplay().getRotation()).build();
-        imgCap = new ImageCapture(imageCaptureConfig);
-
-        btCaptureImage.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                captureImage(imgCap);
-            }
-        });
-
-        CameraX.bindToLifecycle(this, preview, imgCap);
+        cameraController = new CameraCaptureController(this, this, txvCamera);
+        cameraController.start();
+        btCaptureImage.setOnClickListener(v -> captureImage());
     }
 
-    private File captureImage(ImageCapture imgCap) {
-        shutterSound.start();
-        responseWaiting = true;
-        long currentTimestamp = System.currentTimeMillis();
-        File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).getAbsolutePath() + "/" + requestId);
-        try {
-            if (dir.mkdir()) {
-                Log.d("Directory creation", "Directory created");
-            } else {
-                Log.d("Directory creation", "Directory creation failed");
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
+    private File captureImage() {
+        if (cameraController == null) return null;
+        if (currentLocation == null) {
+            Toast.makeText(this, "Waiting for a GPS fix", Toast.LENGTH_SHORT).show();
+            return null;
         }
-        String filePath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).getAbsolutePath() + "/" + requestId + "/" + currentTimestamp + ".jpg";
-        File file = new File(filePath);
-        imgCap.takePicture(file, new ImageCapture.OnImageSavedListener() {
-            @RequiresApi(api = Build.VERSION_CODES.Q)
+        if (shutterSound != null) shutterSound.start();
+        long currentTimestamp = System.currentTimeMillis();
+        latestCaptureTimestamp = currentTimestamp;
+        Location captureLocation = new Location(currentLocation);
+        File dir = ImageStorage.getFolder(this, requestId);
+        if (!dir.exists() && !dir.mkdirs()) {
+            Toast.makeText(this, "Unable to create image folder", Toast.LENGTH_LONG).show();
+            return null;
+        }
+        File file = new File(dir, currentTimestamp + ".jpg");
+        cameraController.capture(file, new CameraCaptureController.CaptureCallback() {
             @Override
-            public void onImageSaved(@NonNull @NotNull File file) {
-
+            public void onSaved(File savedFile) {
                 fileNames.add(currentTimestamp);
-                ExifInterface exif = null;
                 try {
-                    exif = new ExifInterface(filePath);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-                exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, GPS.convert(currentLocation.getLatitude()));
-                exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE,  GPS.convert(currentLocation.getLongitude()));
-                try {
+                    ExifInterface exif = new ExifInterface(savedFile.getAbsolutePath());
+                    exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, GPS.convert(captureLocation.getLatitude()));
+                    exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, GPS.convert(captureLocation.getLongitude()));
                     exif.saveAttributes();
-                    String msg = "Pic captured at " + file.getAbsolutePath();
-                    processImage(file, currentLocation, currentTimestamp);
                 } catch (IOException e) {
-                    e.printStackTrace();
+                    Log.e("ImageCapture", "Unable to save image metadata", e);
                 }
+                processImage(savedFile, captureLocation, currentTimestamp);
             }
 
             @Override
-            public void onError(@NonNull @NotNull ImageCapture.UseCaseError useCaseError, @NonNull @NotNull String message, @Nullable @org.jetbrains.annotations.Nullable Throwable cause) {
-
-                String msg = "Pic capture failed " + message;
-                Log.e("Pic capture failed", message);
-                Log.e("Pic capture failed", useCaseError.toString());
-                Log.e("Pic capture failed", cause.toString());
-                Toast.makeText(getBaseContext(), msg, Toast.LENGTH_LONG).show();
-
-                if(cause != null) {
-                    cause.printStackTrace();
-                }
+            public void onError(ImageCaptureException exception) {
+                Toast.makeText(ImageCaptureActivity.this, "Pic capture failed: " + exception.getMessage(), Toast.LENGTH_LONG).show();
             }
         });
         return file;
-    }
-
-    private void updateTransform() {
-        Matrix mx = new Matrix();
-        float w = txvCamera.getMeasuredWidth();
-        float h = txvCamera.getMeasuredHeight();
-
-        float cx = w/2f;
-        float cy = h/2f;
-
-        int rotationDgr;
-        int rotation = (int) txvCamera.getRotation();
-
-        switch(rotation){
-            case Surface.ROTATION_0:
-                rotationDgr = 0;
-                break;
-            case Surface.ROTATION_90:
-                rotationDgr = 90;
-                break;
-            case Surface.ROTATION_180:
-                rotationDgr = 180;
-                break;
-            case Surface.ROTATION_270:
-                rotationDgr = 270;
-                break;
-            default:
-                return;
-        }
-
-        mx.postRotate((float)rotationDgr, cx, cy);
-        txvCamera.setTransform(mx);
     }
 
     private boolean allPermissionGranted() {
@@ -493,88 +394,32 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
         return true;
     }
 
-    public void processImage(File file, Location location, Long currentTimestamp) throws IOException {
-        tvColorLevel.setText("Processing...");
-        String url = "http://127.0.0.1:5000/svcprocess";
-
-        Thread thread = new Thread(new Runnable() {
-
-            @Override
-            public void run() {
-
-                SyncHttpClient client = new SyncHttpClient();
-                RequestParams params = new RequestParams();
-                try {
-                    params.put("image", new File(file.getAbsolutePath()));
-                } catch (FileNotFoundException e) {
-                    e.printStackTrace();
-                }
-
-                client.post(url, params, new TextHttpResponseHandler() {
+    private void processImage(File file, Location location, Long currentTimestamp) {
+        if (location == null) {
+            Toast.makeText(this, "Image saved, but no GPS fix was available. It was not queued for prediction.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        tvColorLevel.setText("Saved locally · predicting...");
+        CaptureSyncManager.saveAndUpload(this, file, requestId,
+                location.getLatitude(), location.getLongitude(), currentTimestamp,
+                new CaptureSyncManager.Callback() {
                     @Override
-                    public void onFailure(int statusCode, Header[] headers, String responseString, Throwable throwable) {
-                        System.out.print("Response===no response");
-                        Toast.makeText(ImageCaptureActivity.this, "No response from the Server", Toast.LENGTH_SHORT).show();
-                        beep.start();
+                    public void onPredicted(int level) {
+                        if (currentTimestamp.longValue() != latestCaptureTimestamp) return;
+                        tvColorLevel.setText("LCC level " + level);
+                        if (success != null) success.start();
+                        Toast.makeText(ImageCaptureActivity.this, "Prediction ready: LCC " + level, Toast.LENGTH_SHORT).show();
                     }
 
                     @Override
-                    public void onSuccess(int statusCode, Header[] headers, String responseString) {
-                        String level = responseString;
-                        System.out.println("Response===Success =  "+ level);
-                        Log.d("Response===Success ", responseString);
-                        System.out.println("Response===Success "+ responseString);
-                        tvColorLevel.setText("Level "+level);
-
-                        FirebaseAuth mAuth = FirebaseAuth.getInstance();
-                        FirebaseFirestore db = FirebaseFirestore.getInstance();
-                        String uId = mAuth.getInstance().getUid();
-
-                        Map<String, Object> data = new HashMap<>();
-                        data.put("requestId", requestId);
-                        data.put("latitude", location.getLatitude());
-                        data.put("longitude", location.getLongitude());
-                        data.put("officerId", uId);
-                        data.put("level", Integer.parseInt(level));
-                        data.put("timestamp", currentTimestamp);
-
-                        db.collection("FieldData")
-                                .add(data)
-                                .addOnSuccessListener(new OnSuccessListener<DocumentReference>() {
-                                    @Override
-                                    public void onSuccess(DocumentReference documentReference) {
-                                        success.start();
-                                        Handler handler = new Handler();
-                                        handler.postDelayed(new Runnable() {
-                                            public void run() {
-                                                responseWaiting = false;
-                                            }
-                                        }, 2000);
-                                        Toast.makeText(ImageCaptureActivity.this, "ALL SUCCESS", Toast.LENGTH_SHORT).show();
-                                    }
-                                })
-                                .addOnFailureListener(new OnFailureListener() {
-                                    @Override
-                                    public void onFailure(@NonNull @NotNull Exception e) {
-                                        responseWaiting = false;
-                                        Toast.makeText(ImageCaptureActivity.this, e.getMessage(), Toast.LENGTH_SHORT).show();
-                                        beep.start();
-                                    }
-                                });
-
+                    public void onQueued() {
+                        if (currentTimestamp.longValue() != latestCaptureTimestamp) return;
+                        tvColorLevel.setText("Saved · process after inspection");
+                        Toast.makeText(ImageCaptureActivity.this,
+                                "Image saved for processing after the inspection ends.",
+                                Toast.LENGTH_LONG).show();
                     }
                 });
-
-            }
-        });
-
-
-        Handler handler = new Handler();
-        handler.postDelayed(new Runnable() {
-            public void run() {
-                thread.start();
-            }
-        }, 500);
     }
 
     @Override
@@ -601,12 +446,11 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
                     captured = false;
                 }
 
-                System.out.println("testing == "+ captured + "-" + cameraWaiting + "-" + responseWaiting + "-" + isWithinBoundary+ "-" + countdownWaiting);
 
-                if(hitResult <= THRESHOLD && !captured && !cameraWaiting && !responseWaiting  && isWithinBoundary && !countdownWaiting){
+                if(hitResult <= THRESHOLD && !captured && !cameraWaiting && isWithinBoundary && !countdownWaiting){
                     captured = true;
                     cameraWaiting = true;
-                    captureImage(imgCap);
+                    if (captureImage() == null) captured = false;
 
                     Handler handler = new Handler();
                     handler.postDelayed(new Runnable() {
