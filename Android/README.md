@@ -1,6 +1,6 @@
 # Android app
 
-The app targets Android 16 (API 36), supports Android 5.0+ (API 21), and uses lifecycle-bound CameraX. Online captures are first written to internal app storage and a SQLite outbox. The app makes one immediate prediction attempt for each capture with a usable network. If that attempt or its Firestore write fails, the image remains queued and is not retried while the UAV continues its inspection. At inspection end, the app makes one batch pass over that inspection's deferred images, shows a processed/pending summary, and exports any remaining images for web upload.
+The app targets Android 16 (API 36), supports Android 5.0+ (API 21), and uses lifecycle-bound CameraX. Online captures are first written to internal app storage and a SQLite outbox. The app makes one immediate prediction attempt for each capture with a usable network. If that attempt or its Firestore write fails, the image remains queued and is not retried while the UAV continues its inspection. At inspection end, the review screen shows the number of pending images. The user can tap **Upload failed images** when ready to run a deferred processing attempt; anything that still cannot be processed stays queued and is copied to shared Pictures storage for the instructor web app.
 
 The separate offline batch mode continues to capture and review images without prediction, then exports them to `Pictures/SmartRiceCare/<folder>` for selection in the web upload form. It needs the instructor web workflow to associate and process those images later.
 

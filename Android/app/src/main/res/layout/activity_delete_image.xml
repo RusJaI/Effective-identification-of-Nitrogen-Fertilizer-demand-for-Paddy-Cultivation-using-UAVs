@@ -56,13 +56,26 @@
         android:id="@+id/tvSyncReport"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_above="@id/bottomActions"
+        android:layout_above="@id/btUploadFailed"
         android:layout_alignParentBottom="false"
         android:background="#EEFFFFFF"
         android:gravity="center"
         android:padding="12dp"
         android:textColor="@color/green_800"
         android:textSize="14sp"
+        android:visibility="gone" />
+
+    <Button
+        android:id="@+id/btUploadFailed"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_above="@id/bottomActions"
+        android:layout_marginLeft="24dp"
+        android:layout_marginRight="24dp"
+        android:layout_marginBottom="8dp"
+        android:backgroundTint="@color/green_800"
+        android:text="Upload failed images"
+        android:textColor="@color/white"
         android:visibility="gone" />
 
     <LinearLayout

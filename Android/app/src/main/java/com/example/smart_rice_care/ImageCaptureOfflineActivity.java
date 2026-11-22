@@ -132,12 +132,7 @@ public class ImageCaptureOfflineActivity extends AppCompatActivity implements Se
         }
 
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            System.out.println("testing=== requesting permission");
-            ActivityCompat.requestPermissions(ImageCaptureOfflineActivity.this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION},225);
-            return;
-        }
-        locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0, ImageCaptureOfflineActivity.this);
+        requestCapturePermissionsOrInitialize();
 
         shutterSound = MediaPlayer.create(ImageCaptureOfflineActivity.this, R.raw.shutter);
 
@@ -194,11 +189,6 @@ public class ImageCaptureOfflineActivity extends AppCompatActivity implements Se
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
-        if (allPermissionGranted()) {
-            startCamera();
-        } else {
-            ActivityCompat.requestPermissions(this, REQUIRED_PERMISSSIONS, REQUEST_CODE_PERMISSIONS);
-        }
     }
 
     private void startCamera() {
@@ -252,13 +242,40 @@ public class ImageCaptureOfflineActivity extends AppCompatActivity implements Se
     }
 
     private boolean allPermissionGranted() {
+        boolean hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        if (!hasLocation) return false;
         for (String permission: REQUIRED_PERMISSSIONS) {
             if(ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, REQUIRED_PERMISSSIONS,50);
                 return false;
             }
         }
         return true;
+    }
+
+    private void requestCapturePermissionsOrInitialize() {
+        boolean hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean hasCamera = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+        if (hasLocation && hasCamera) {
+            locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0, this);
+            startCamera();
+        } else {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA,
+                    Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, REQUEST_CODE_PERMISSIONS);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_CODE_PERMISSIONS) {
+            if (allPermissionGranted()) {
+                requestCapturePermissionsOrInitialize();
+            } else {
+                Toast.makeText(this, "Camera and location permissions are required for geotagged captures", Toast.LENGTH_LONG).show();
+            }
+        }
     }
 
     @Override
@@ -274,7 +291,7 @@ public class ImageCaptureOfflineActivity extends AppCompatActivity implements Se
             double delta = mAccelCurrent - mAccelLast;
             mAccel = mAccel * 0.9f + delta;
 
-            if (hitCount <= SAMPLE_SIZE) {
+            if (hitCount < SAMPLE_SIZE) {
                 hitCount++;
                 hitSum += Math.abs(mAccel);
             } else {

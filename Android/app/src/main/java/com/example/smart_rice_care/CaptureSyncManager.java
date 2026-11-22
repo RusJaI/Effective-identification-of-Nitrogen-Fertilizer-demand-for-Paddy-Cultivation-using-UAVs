@@ -20,7 +20,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-/** Saves each capture before trying the server, then falls back to durable network-constrained work. */
+/** Saves each capture before trying the server and keeps failures in a durable SQLite outbox. */
 public final class CaptureSyncManager {
     public interface Callback {
         void onPredicted(int level);
@@ -29,6 +29,10 @@ public final class CaptureSyncManager {
 
     public interface BatchCallback {
         void onCompleted(int predictedCount, List<CaptureRecord> remaining, boolean attempted);
+    }
+
+    public interface PendingCallback {
+        void onLoaded(List<CaptureRecord> pending);
     }
 
     private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(2);
@@ -107,7 +111,7 @@ public final class CaptureSyncManager {
                         CaptureUploadClient.upload(appContext, capture);
                         predicted++;
                     } catch (Exception ignored) {
-                        // One end-of-inspection pass only. Leave the image in the outbox for web upload.
+                        // Keep failures queued; the user can explicitly retry from the inspection report.
                     }
                 }
                 List<CaptureRecord> remaining = getPending(appContext, requestId);
@@ -123,6 +127,20 @@ public final class CaptureSyncManager {
                 List<CaptureRecord> result = remaining;
                 MAIN.post(() -> callback.onCompleted(0, result, false));
             }
+        });
+    }
+
+    public static void getPendingForInspection(Context context, String requestId, PendingCallback callback) {
+        Context appContext = context.getApplicationContext();
+        EXECUTOR.execute(() -> {
+            List<CaptureRecord> pending;
+            try {
+                pending = getPending(appContext, requestId);
+            } catch (Exception e) {
+                pending = java.util.Collections.emptyList();
+            }
+            List<CaptureRecord> result = pending;
+            MAIN.post(() -> callback.onLoaded(result));
         });
     }
 

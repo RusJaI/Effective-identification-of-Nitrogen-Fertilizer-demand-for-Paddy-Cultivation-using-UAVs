@@ -135,12 +135,7 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
         }
 
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            System.out.println("testing=== requesting permission");
-            ActivityCompat.requestPermissions(ImageCaptureActivity.this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION},225);
-            return;
-        }
-        locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0, ImageCaptureActivity.this);
+        requestCapturePermissionsOrInitialize();
 
 
         shutterSound = MediaPlayer.create(ImageCaptureActivity.this, R.raw.shutter);
@@ -182,12 +177,6 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 //        frameLayout.addView(btCaptureImage);
 
-
-        if (allPermissionGranted()) {
-            startCamera();
-        } else {
-            ActivityCompat.requestPermissions(this, REQUIRED_PERMISSSIONS, REQUEST_CODE_PERMISSIONS);
-        }
 
         btStop = findViewById(R.id.btStop);
         btStop.setOnClickListener(new View.OnClickListener() {
@@ -385,13 +374,40 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
     }
 
     private boolean allPermissionGranted() {
+        boolean hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        if (!hasLocation) return false;
         for (String permission: REQUIRED_PERMISSSIONS) {
             if(ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, REQUIRED_PERMISSSIONS,50);
                 return false;
             }
         }
         return true;
+    }
+
+    private void requestCapturePermissionsOrInitialize() {
+        boolean hasLocation = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean hasCamera = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+        if (hasLocation && hasCamera) {
+            locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0, this);
+            startCamera();
+        } else {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA,
+                    Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, REQUEST_CODE_PERMISSIONS);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_CODE_PERMISSIONS) {
+            if (allPermissionGranted()) {
+                requestCapturePermissionsOrInitialize();
+            } else {
+                Toast.makeText(this, "Camera and location permissions are required for geotagged captures", Toast.LENGTH_LONG).show();
+            }
+        }
     }
 
     private void processImage(File file, Location location, Long currentTimestamp) {
@@ -435,7 +451,7 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
             double delta = mAccelCurrent - mAccelLast;
             mAccel = mAccel * 0.9f + delta;
 
-            if (hitCount <= SAMPLE_SIZE) {
+            if (hitCount < SAMPLE_SIZE) {
                 hitCount++;
                 hitSum += Math.abs(mAccel);
             } else {

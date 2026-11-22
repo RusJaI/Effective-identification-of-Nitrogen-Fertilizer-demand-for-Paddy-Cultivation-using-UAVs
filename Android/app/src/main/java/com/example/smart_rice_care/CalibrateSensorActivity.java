@@ -182,7 +182,7 @@ public class CalibrateSensorActivity extends AppCompatActivity implements Sensor
             double delta = mAccelCurrent - mAccelLast;
             mAccel = mAccel * 0.9f + delta;
 
-            if (hitCount <= SAMPLE_SIZE) {
+            if (hitCount < SAMPLE_SIZE) {
                 hitCount++;
                 hitSum += Math.abs(mAccel);
             } else {

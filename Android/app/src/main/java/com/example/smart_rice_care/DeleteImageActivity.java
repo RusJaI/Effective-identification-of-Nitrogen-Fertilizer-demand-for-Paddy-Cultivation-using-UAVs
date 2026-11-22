@@ -43,7 +43,7 @@ public class DeleteImageActivity extends AppCompatActivity {
     TextView tvImageCount;
     Integer currentIndex;
     ImageView ivImage, ivNext, ivBack;
-    Button btDelete, btFinish;
+    Button btDelete, btFinish, btUploadFailed;
     TextView tvSyncReport;
     String folderName, approach;
 
@@ -62,12 +62,13 @@ public class DeleteImageActivity extends AppCompatActivity {
         ivBack = findViewById(R.id.ivBack);
         btDelete = findViewById(R.id.btDelete);
         btFinish = findViewById(R.id.btFinish);
+        btUploadFailed = findViewById(R.id.btUploadFailed);
         tvSyncReport = findViewById(R.id.tvSyncReport);
         tvImageCount = findViewById(R.id.tvImageCount);
         currentIndex = fileNames.size()-1;
 
         if ("online".equals(approach)) {
-            startDeferredProcessing(getIntent.getStringExtra("requestId"));
+            showPendingCaptures(getIntent.getStringExtra("requestId"));
         }
 
         showImage();
@@ -156,6 +157,7 @@ public class DeleteImageActivity extends AppCompatActivity {
                             Toast.makeText(DeleteImageActivity.this, "Deleted", Toast.LENGTH_SHORT).show();
                             System.out.println("testing==="+fileNames.size());
                             showImage();
+                            if ("online".equals(approach)) showPendingCaptures(folderName);
                         } else {
                             Toast.makeText(DeleteImageActivity.this, "Unable to delete the file", Toast.LENGTH_SHORT).show();
                         }
@@ -195,16 +197,38 @@ public class DeleteImageActivity extends AppCompatActivity {
             }
         });
 
+        btUploadFailed.setOnClickListener(v -> uploadFailedImages(getIntent.getStringExtra("requestId")));
+
 
     }
 
-    /** Process only failed captures, and only after the inspection has ended. */
-    private void startDeferredProcessing(String requestId) {
+    /** Show queued failures without retrying them until the user asks. */
+    private void showPendingCaptures(String requestId) {
         if (requestId == null || requestId.isEmpty()) return;
+        tvSyncReport.setVisibility(View.VISIBLE);
+        tvSyncReport.setText("Checking for failed images…");
+        btUploadFailed.setVisibility(View.GONE);
+        CaptureSyncManager.getPendingForInspection(this, requestId, pending -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (pending.isEmpty()) {
+                tvSyncReport.setText("No failed images are waiting to upload.");
+                btUploadFailed.setVisibility(View.GONE);
+            } else {
+                tvSyncReport.setText(pending.size() + " image(s) could not be processed during the inspection.");
+                btUploadFailed.setText("Upload failed images (" + pending.size() + ")");
+                btUploadFailed.setVisibility(View.VISIBLE);
+            }
+        });
+    }
+
+    /** Retry queued captures only after the user taps Upload failed images. */
+    private void uploadFailedImages(String requestId) {
+        if (requestId == null || requestId.isEmpty()) return;
+        btUploadFailed.setEnabled(false);
         btFinish.setEnabled(false);
         btDelete.setEnabled(false);
         tvSyncReport.setVisibility(View.VISIBLE);
-        tvSyncReport.setText("Checking for images deferred during this inspection…");
+        tvSyncReport.setText("Uploading failed images…");
         CaptureSyncManager.processPendingForInspection(this, requestId,
                 (predictedCount, remaining, attempted) -> {
                     if (isFinishing() || isDestroyed()) return;
@@ -222,11 +246,18 @@ public class DeleteImageActivity extends AppCompatActivity {
                         report = new StringBuilder("All images from this inspection already have results.");
                     }
                     if (!attempted && !remaining.isEmpty()) {
-                        report.append(" No network was available at inspection end, so these images were not retried.");
+                        report.append(" No network was available for this attempt, so the images remain queued.");
                     }
                     tvSyncReport.setText(report.toString());
                     btFinish.setEnabled(true);
                     btDelete.setEnabled(true);
+                    if (remaining.isEmpty()) {
+                        btUploadFailed.setVisibility(View.GONE);
+                    } else {
+                        btUploadFailed.setText("Try upload again (" + remaining.size() + ")");
+                        btUploadFailed.setVisibility(View.VISIBLE);
+                    }
+                    btUploadFailed.setEnabled(true);
                 });
     }
 
