@@ -11,7 +11,8 @@ The intended UAV workflow mounts an Android phone on the aircraft. The app waits
 | Component | Main technologies | Responsibilities |
 | --- | --- | --- |
 | `Android/` | Java, AndroidX, CameraX, Google Maps, Firebase Auth/Firestore | Farmer and instructor workflows, field/inspection requests, UAV image capture, location and boundary checks, result views, offline capture/export |
-| `Web/` | Angular 11, AngularFire, Firebase Hosting | Instructor and administrator dashboards, image upload, field/farmer reports, LCC history, inspection request and appointment workflows |
+| `Web/` | Angular 11, AngularFire, Firebase Hosting | Original instructor and administrator dashboards, image upload, field/farmer reports, LCC history, inspection request and appointment workflows |
+| `WebAngular21/` | Angular 21.2, AngularFire 21, Firebase Hosting | Fresh Angular 21 workspace containing the ported instructor/admin web app; kept beside `Web/` until dependency installation and build verification complete |
 | `PythonServer/` | Flask, OpenCV, NumPy/Pandas, scikit-learn, Firebase Admin | Image preprocessing and LCC classification; optional Firestore write route |
 
 The Android, web, and Python components currently share Firebase data but do not use one unified application API. The Android and web clients access Firestore directly; they call the prediction service separately for image classification.
@@ -52,6 +53,7 @@ The sensor sampling bug has been corrected in the current working tree: a `SAMPL
 ## Web and API behavior
 
 - The web app uses Firebase/Firestore services for users, fields, requests, reports, and LCC details.
+- `WebAngular21/` ports the existing Angular screens, routes, services, models, and assets into a new Angular 21.2 workspace. It uses AngularFire's supported `compat` APIs while retaining the existing Firestore data model, migrates AGM maps to `@angular/google-maps`, updates charts, and replaces the old table exporter and demo slider/switch wrappers.
 - `FieldDataService` sends images to the configured prediction service. `FieldVisitService` filters requests by status; the field-specific filters were corrected to use complete status arrays.
 - The Python service supports `POST /svcprocess` and `POST /process` with multipart `image`, returning the LCC level as text. `POST /svcprocessfire` additionally accepts `field_data` and writes to `TestingFieldData` when Firebase credentials are available.
 - The Android client uses `/svcprocess` and writes its operational result to `FieldData` itself. This differs from the server's optional `TestingFieldData` Firestore route.
@@ -73,13 +75,13 @@ A gradual improvement would be:
 ## Configuration and deployment notes
 
 - `Android/local.properties` supplies `GEO_MAP_API_KEY` and `FLASK_SERVER_URL`; `Android/app/google-services.json` is needed for Firebase-backed mobile features. These credentials are not included in the repository.
-- The web app imports `Web/src/environments/environment`, but that directory was absent in the inspected checkout. Unless supplied separately, the web app may not build or initialize Firebase.
-- The prediction endpoint URL in the web service is currently a source constant and should be moved to environment-specific configuration before deployment.
+- The original `Web/` app imports `Web/src/environments/environment`, which is absent in the checkout. `WebAngular21/` includes placeholder environment files; replace the Firebase and Maps values before use or deployment.
+- The `WebAngular21/` source is ported, but its dependencies have not been installed and the workspace has not been built because this environment cannot resolve `registry.npmjs.org`. Generate and commit `WebAngular21/package-lock.json` once npm registry access is restored.
 - The documented Cloud Run URL and historic route names have differed in the repository. Confirm that the deployed service runs the current `PythonServer/server.py` and exposes `/svcprocess` before field testing.
 - The model pickle must only be loaded from a trusted build artifact. Its scikit-learn version must remain compatible with the pinned dependency or the model should be retrained and re-exported.
 
 ## Notes
 
 - The online and offline capture activities now request camera and location permissions together, continue initializing the screen while the system prompt is open, and resume camera/GPS initialization after a grant. A denied permission leaves capture unavailable and shows a message.
-- The offline mobile workflow copies captures to `Pictures/SmartRiceCare` on Finish; a person still selects and uploads those files from the web app. The mobile app does not automatically upload offline captures. The online failed-capture batch is a separate one-time post-inspection prediction attempt. This is intentional, as the user should be able to decide at which point they should sync the failed data.
+- The offline mobile workflow copies captures to `Pictures/SmartRiceCare` on Finish; a person still selects and uploads those files from the web app. The mobile app does not automatically upload offline captures. For online failed captures, the inspection report waits for the user to tap **Upload failed images**; they can retry later from that screen.
 - Firebase and Maps credentials are environment-specific and absent from this checkout.

@@ -211,25 +211,22 @@ public class ImageCaptureOfflineActivity extends AppCompatActivity implements Se
         cameraController.capture(file, new CameraCaptureController.CaptureCallback() {
             @Override
             public void onSaved(File savedFile) {
-                fileNames.add(currentTimestamp);
-                tvColorLevel.setText("Saving...");
-                try {
-                    ExifInterface exif = new ExifInterface(savedFile.getAbsolutePath());
-                    if (currentLocation != null) {
-                        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, GPS.convert(currentLocation.getLatitude()));
-                        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, GPS.convert(currentLocation.getLongitude()));
+                ImageSharpness.measureAsync(savedFile, new ImageSharpness.Callback() {
+                    @Override
+                    public void onMeasured(double variance) {
+                        Log.i("ImageCaptureOffline", "Captured image VoL=" + variance);
+                        if (variance < ImageSharpness.MINIMUM_ACCEPTABLE_VOL) {
+                            discardRejectedImage(savedFile, "Image is blurry (VoL " + String.format(java.util.Locale.US, "%.1f", variance) + " < 60); rejected.");
+                            return;
+                        }
+                        acceptCapturedImage(savedFile, currentTimestamp);
                     }
-                    exif.saveAttributes();
-                    success.start();
-                    new Handler().postDelayed(() -> {
-                        tvColorLevel.setText("Ready...");
-                        responseWaiting = false;
-                    }, 2000);
-                    Toast.makeText(ImageCaptureOfflineActivity.this, "Pic captured at " + savedFile.getAbsolutePath(), Toast.LENGTH_SHORT).show();
-                } catch (IOException e) {
-                    responseWaiting = false;
-                    Toast.makeText(ImageCaptureOfflineActivity.this, e.getMessage(), Toast.LENGTH_SHORT).show();
-                }
+
+                    @Override
+                    public void onError() {
+                        discardRejectedImage(savedFile, "Could not check image sharpness; image was discarded.");
+                    }
+                });
             }
 
             @Override
@@ -239,6 +236,38 @@ public class ImageCaptureOfflineActivity extends AppCompatActivity implements Se
             }
         });
         return file;
+    }
+
+    private void acceptCapturedImage(File savedFile, long currentTimestamp) {
+        fileNames.add(currentTimestamp);
+        tvColorLevel.setText("Saving...");
+        try {
+            ExifInterface exif = new ExifInterface(savedFile.getAbsolutePath());
+            if (currentLocation != null) {
+                exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, GPS.convert(currentLocation.getLatitude()));
+                exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, GPS.convert(currentLocation.getLongitude()));
+            }
+            exif.saveAttributes();
+            success.start();
+            new Handler().postDelayed(() -> {
+                tvColorLevel.setText("Ready...");
+                responseWaiting = false;
+            }, 2000);
+            Toast.makeText(ImageCaptureOfflineActivity.this, "Pic captured at " + savedFile.getAbsolutePath(), Toast.LENGTH_SHORT).show();
+        } catch (IOException e) {
+            responseWaiting = false;
+            Toast.makeText(ImageCaptureOfflineActivity.this, e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void discardRejectedImage(File image, String message) {
+        if (image.exists() && !image.delete()) {
+            Log.e("ImageCaptureOffline", "Unable to delete rejected image " + image.getAbsolutePath());
+        }
+        captured = false;
+        responseWaiting = false;
+        tvColorLevel.setText("Blurry image rejected · ready to retry");
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 
     private boolean allPermissionGranted() {

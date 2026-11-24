@@ -353,16 +353,22 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
         cameraController.capture(file, new CameraCaptureController.CaptureCallback() {
             @Override
             public void onSaved(File savedFile) {
-                fileNames.add(currentTimestamp);
-                try {
-                    ExifInterface exif = new ExifInterface(savedFile.getAbsolutePath());
-                    exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, GPS.convert(captureLocation.getLatitude()));
-                    exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, GPS.convert(captureLocation.getLongitude()));
-                    exif.saveAttributes();
-                } catch (IOException e) {
-                    Log.e("ImageCapture", "Unable to save image metadata", e);
-                }
-                processImage(savedFile, captureLocation, currentTimestamp);
+                ImageSharpness.measureAsync(savedFile, new ImageSharpness.Callback() {
+                    @Override
+                    public void onMeasured(double variance) {
+                        Log.i("ImageCapture", "Captured image VoL=" + variance);
+                        if (variance < ImageSharpness.MINIMUM_ACCEPTABLE_VOL) {
+                            discardRejectedImage(savedFile, "Image is blurry (VoL " + String.format(java.util.Locale.US, "%.1f", variance) + " < 60); rejected.");
+                            return;
+                        }
+                        acceptCapturedImage(savedFile, captureLocation, currentTimestamp);
+                    }
+
+                    @Override
+                    public void onError() {
+                        discardRejectedImage(savedFile, "Could not check image sharpness; image was discarded.");
+                    }
+                });
             }
 
             @Override
@@ -371,6 +377,28 @@ public class ImageCaptureActivity extends AppCompatActivity implements SensorEve
             }
         });
         return file;
+    }
+
+    private void acceptCapturedImage(File savedFile, Location captureLocation, long currentTimestamp) {
+        fileNames.add(currentTimestamp);
+        try {
+            ExifInterface exif = new ExifInterface(savedFile.getAbsolutePath());
+            exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, GPS.convert(captureLocation.getLatitude()));
+            exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, GPS.convert(captureLocation.getLongitude()));
+            exif.saveAttributes();
+        } catch (IOException e) {
+            Log.e("ImageCapture", "Unable to save image metadata", e);
+        }
+        processImage(savedFile, captureLocation, currentTimestamp);
+    }
+
+    private void discardRejectedImage(File image, String message) {
+        if (image.exists() && !image.delete()) {
+            Log.e("ImageCapture", "Unable to delete rejected image " + image.getAbsolutePath());
+        }
+        captured = false;
+        tvColorLevel.setText("Blurry image rejected · ready to retry");
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 
     private boolean allPermissionGranted() {
